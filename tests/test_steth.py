@@ -2,19 +2,41 @@ import brownie
 import pytest
 from utils import convert_to_string
 
-def test_steth_single_sided_liquidity(steth, wsteth, user, steth_pool_lp_token, steth_pool):
-    steth.approve(steth_pool, 2**256 - 1, {'from':user})
-    steth_pool_lp_token.approve(steth_pool, 2**256 - 1, {'from':user})
+def test_steth_single_sided_liquidity(RELATIVE_APPROX, steth, wsteth, user, steth_pool_lp_token, steth_pool):
+    add_liquidity_single_sided(RELATIVE_APPROX, steth, user, steth_pool_lp_token, steth_pool)
 
-    steth.submit(brownie.ZERO_ADDRESS, {"from" :user, "value":"10 ether"})
-    steth_bal_user = steth.balanceOf(user)
-    print("User steth balance before", steth_bal_user)
-
-    tx = steth_pool.add_liquidity([0, steth_bal_user], 0, {'from':user})
-    print("Fees paid for single sided liquidity added with only steth", tx.events["AddLiquidity"]["fees"])
+    withdrawn_steth = steth_pool.remove_liquidity_one_coin(steth_pool_lp_token.balanceOf(user), 1, 0, {'from':user})
+    print("User steth amount after removen single sided to steth", withdrawn_steth.return_value)
 
 
-def test_steth_balanced_liquidity(RELATIVE_APPROX, steth, wsteth, user, steth_pool_lp_token, steth_pool, steth_oracle_reporter, oracle_1, oracle_2, oracle_3, oracle_4, oracle_5):
+def test_steth_single_sided_liquidity_steth_grow(RELATIVE_APPROX, steth, wsteth, user, steth_pool_lp_token, steth_pool, steth_oracle_reporter, oracle_1, oracle_2, oracle_3, oracle_4, oracle_5):
+    steth_added_lp = add_liquidity_single_sided(RELATIVE_APPROX, steth, user, steth_pool_lp_token, steth_pool)
+    
+    report_rewards = 5069123824661090
+    epoch_id = steth_oracle_reporter.getExpectedEpochId()
+    validators = 151444
+    
+    user_steth_idle_bal = steth.balanceOf(user)
+    print("User idle steth bal before", user_steth_idle_bal)
+
+    steth_oracle_reporter.reportBeacon(epoch_id, report_rewards, validators, {"from": oracle_1})
+    steth_oracle_reporter.reportBeacon(epoch_id, report_rewards, validators, {"from": oracle_2})
+    steth_oracle_reporter.reportBeacon(epoch_id, report_rewards, validators, {"from": oracle_3})
+    steth_oracle_reporter.reportBeacon(epoch_id, report_rewards, validators, {"from": oracle_4})
+    steth_oracle_reporter.reportBeacon(epoch_id, report_rewards, validators, {"from": oracle_5})
+
+    user_steth_idle_bal_after = steth.balanceOf(user)
+    print("User idle steth bal after oracle report", user_steth_idle_bal_after)
+    
+    withdrawn_steth = steth_pool.remove_liquidity_one_coin(steth_pool_lp_token.balanceOf(user), 1, 0, {'from':user})
+
+    predicted_steth_withdrawable_from_lp = (steth_added_lp * user_steth_idle_bal_after) / user_steth_idle_bal
+
+    print("After removing liquidity single sided to steth balance", withdrawn_steth.return_value)
+    print("Predicted withdrawable steth after steth growing in pool", convert_to_string(predicted_steth_withdrawable_from_lp))
+
+
+def test_steth_balanced_liquidity(RELATIVE_APPROX, steth, wsteth, user, steth_pool_lp_token, steth_pool):
     received_lp, x = add_liquidity_balanced_amounts(RELATIVE_APPROX, steth, user, steth_pool_lp_token, steth_pool, 10*1e18)
 
     withdrawn_amounts = steth_pool.remove_liquidity(received_lp, [0,0], {'from':user})
@@ -82,4 +104,19 @@ def add_liquidity_balanced_amounts(RELATIVE_APPROX, steth, user, steth_pool_lp_t
 
     return user_lp_bal, steth_amount
 
+
+def add_liquidity_single_sided(RELATIVE_APPROX, steth, user, steth_pool_lp_token, steth_pool):
+    steth.approve(steth_pool, 2**256 - 1, {'from':user})
+    steth_pool_lp_token.approve(steth_pool, 2**256 - 1, {'from':user})
+    
+    steth.submit(brownie.ZERO_ADDRESS, {"from" :user, "value":"20 ether"})
+    steth_bal_user = steth.balanceOf(user)
+    assert steth_bal_user > 0
+
+    steth_amount = steth_bal_user / 2
+
+    tx = steth_pool.add_liquidity([0, steth_amount], 0, {'from':user})
+    print("Fees paid for single sided liquidity added with only steth", tx.events["AddLiquidity"]["fees"])
+    
+    return steth_amount
 
